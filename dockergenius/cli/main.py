@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -15,6 +14,8 @@ from dockergenius.core.scorer import PROFILES
 from dockergenius.core.snapshot import build_snapshot, save_snapshot, load_snapshot, latest_snapshot_name
 from dockergenius.core.diff import compute_diff
 from dockergenius.output.markdown import write_snapshot_diff_markdown
+from dockergenius.security.analyzer import audit_containers
+from dockergenius.remediation.fixer import generate_fix_artifacts
 
 app = typer.Typer(help="dockergenius CLI")
 console = Console()
@@ -170,6 +171,60 @@ def snapshot_diff_cmd(
 
     if md_path:
         console.print(f"[green]Markdown report:[/green] {md_path}")
+
+
+@app.command("containers-audit")
+def containers_audit(
+    json_mode: bool = typer.Option(False, "--json"),
+    fix_script: bool = typer.Option(False, "--fix-script", help="Generate remediation shell script"),
+):
+    client = get_client()
+    containers = list_containers_full(client)
+    audit = audit_containers(containers)
+
+    if fix_script:
+        audit["remediation"] = generate_fix_artifacts(audit)
+
+    if json_mode:
+        console.print_json(data=audit)
+        raise typer.Exit()
+
+    s = audit["summary"]
+    t = Table(title="Containers Security Audit", box=box.SIMPLE_HEAVY)
+    t.add_column("Metric", style="bold cyan")
+    t.add_column("Value")
+    t.add_row("containers", str(s["containers"]))
+    t.add_row("findings", str(s["findings"]))
+    t.add_row("critical", str(s["critical"]))
+    t.add_row("high", str(s["high"]))
+    t.add_row("medium", str(s["medium"]))
+    t.add_row("low", str(s["low"]))
+    console.print(t)
+
+    ftab = Table(title="Top findings", box=box.MINIMAL)
+    ftab.add_column("Severity")
+    ftab.add_column("Container")
+    ftab.add_column("Check")
+    ftab.add_column("Insight")
+    ftab.add_column("Move")
+    for f in audit.get("findings", [])[:20]:
+        sev = str(f.get("severity", ""))
+        sev_colored = (
+            f"[red]{sev}[/red]" if sev == "critical"
+            else f"[yellow]{sev}[/yellow]" if sev == "high"
+            else f"[cyan]{sev}[/cyan]"
+        )
+        ftab.add_row(
+            sev_colored,
+            str(f.get("container", "")),
+            str(f.get("check", "")),
+            str(f.get("insight", "")),
+            str(f.get("move", "")),
+        )
+    console.print(ftab)
+
+    if fix_script and "remediation" in audit:
+        console.print(f"[green]Fix script:[/green] {audit['remediation']['script_path']}")
 
 
 @app.command()
