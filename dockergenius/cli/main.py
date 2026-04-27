@@ -15,6 +15,7 @@ from dockergenius.core.snapshot import build_snapshot, save_snapshot, load_snaps
 from dockergenius.core.diff import compute_diff
 from dockergenius.output.markdown import write_snapshot_diff_markdown
 from dockergenius.security.analyzer import audit_containers
+from dockergenius.security.scanner import scan_images
 from dockergenius.remediation.fixer import generate_fix_artifacts
 
 app = typer.Typer(help="dockergenius CLI")
@@ -225,6 +226,57 @@ def containers_audit(
 
     if fix_script and "remediation" in audit:
         console.print(f"[green]Fix script:[/green] {audit['remediation']['script_path']}")
+
+
+@app.command("images-scan")
+def images_scan(
+    json_mode: bool = typer.Option(False, "--json"),
+    no_cache: bool = typer.Option(False, "--no-cache"),
+    cache_minutes: int = typer.Option(30, "--cache-minutes"),
+):
+    client = get_client()
+    images = list_images_full(client)
+    result = scan_images(images, use_cache=not no_cache, cache_minutes=cache_minutes)
+
+    if json_mode:
+        console.print_json(data=result)
+        raise typer.Exit()
+
+    if result.get("tool") == "none":
+        console.print(f"[red]{result.get('error')}[/red]")
+        raise typer.Exit(1)
+
+    s = result["summary"]
+    t = Table(title=f"Images CVE Scan ({result['tool']})", box=box.SIMPLE_HEAVY)
+    t.add_column("Metric", style="bold cyan")
+    t.add_column("Value")
+    t.add_row("images_scanned", str(s["images_scanned"]))
+    t.add_row("total_vulns", str(s["total_vulns"]))
+    t.add_row("critical", str(s["CRITICAL"]))
+    t.add_row("high", str(s["HIGH"]))
+    t.add_row("medium", str(s["MEDIUM"]))
+    t.add_row("low", str(s["LOW"]))
+    t.add_row("unknown", str(s["UNKNOWN"]))
+    console.print(t)
+
+    top = Table(title="Top vulnerable images", box=box.MINIMAL)
+    top.add_column("Image")
+    top.add_column("RiskPoints")
+    top.add_column("Vulns")
+    top.add_column("Critical")
+    top.add_column("High")
+    top.add_column("Medium")
+    for item in result.get("images", [])[:15]:
+        c = item["counts"]
+        top.add_row(
+            str(item["image"]),
+            str(item["risk_points"]),
+            str(item["vuln_count"]),
+            str(c["CRITICAL"]),
+            str(c["HIGH"]),
+            str(c["MEDIUM"]),
+        )
+    console.print(top)
 
 
 @app.command()
