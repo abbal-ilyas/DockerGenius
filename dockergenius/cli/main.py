@@ -79,11 +79,12 @@ def advisor_run(
 
 
 @app.command("system-analyze")
-def system_analyze(profile: str = typer.Option("dev", "--profile"), json_mode: bool = typer.Option(False, "--json")):
+def system_analyze(
+    profile: str = typer.Option("dev", "--profile"),
+    json_mode: bool = typer.Option(False, "--json"),
+):
     """Alias operation for quick full advisor pass."""
-    ctx = typer.get_current_context()
-    ctx.invoke(advisor_run, profile=profile, top=7, json_mode=json_mode)
-
+    advisor_run(profile=profile, top=7, json_mode=json_mode)
 
 @app.command("snapshot-save")
 def snapshot_save(name: str = "baseline"):
