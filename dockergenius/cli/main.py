@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
-from typing import Optional
-
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -13,18 +12,12 @@ from dockergenius.docker.containers import list_containers_full
 from dockergenius.docker.images import list_images_full
 from dockergenius.core.engine import run_analysis
 from dockergenius.core.scorer import PROFILES
+from dockergenius.core.snapshot import build_snapshot, save_snapshot, load_snapshot, latest_snapshot_name
+from dockergenius.core.diff import compute_diff
+from dockergenius.output.markdown import write_snapshot_diff_markdown
 
 app = typer.Typer(help="dockergenius CLI")
 console = Console()
-
-
-def _risk_color(level: str) -> str:
-    level = str(level).upper()
-    if level == "HIGH":
-        return "[red]HIGH[/red]"
-    if level == "MEDIUM":
-        return "[yellow]MEDIUM[/yellow]"
-    return "[green]LOW[/green]"
 
 
 @app.command()
@@ -83,17 +76,100 @@ def system_analyze(
     profile: str = typer.Option("dev", "--profile"),
     json_mode: bool = typer.Option(False, "--json"),
 ):
-    """Alias operation for quick full advisor pass."""
     advisor_run(profile=profile, top=7, json_mode=json_mode)
 
+
 @app.command("snapshot-save")
-def snapshot_save(name: str = "baseline"):
-    console.print(f"[magenta]snapshot scaffold pending implementation: {name}[/magenta]")
+def snapshot_save_cmd(
+    name: str = typer.Option("", "--name", help="Snapshot name, default timestamp"),
+    profile: str = typer.Option("dev", "--profile"),
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    profile = profile.strip().lower()
+    if profile not in PROFILES:
+        console.print("[red]Invalid profile. Use dev|staging|prod|security[/red]")
+        raise typer.Exit(1)
+
+    if not name:
+        name = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    client = get_client()
+    containers = list_containers_full(client)
+    images = list_images_full(client)
+
+    snapshot = build_snapshot(name=name, profile=profile, containers=containers, images=images)
+    path = save_snapshot(snapshot)
+
+    out = {
+        "ok": True,
+        "snapshot_name": name,
+        "path": str(path),
+        "containers": len(containers),
+        "images": len(images),
+    }
+
+    if json_mode:
+        console.print_json(data=out)
+        raise typer.Exit()
+
+    console.print(f"[green]Snapshot saved:[/green] {path}")
+    console.print(f"Containers: {len(containers)} | Images: {len(images)}")
 
 
 @app.command("snapshot-diff")
-def snapshot_diff(from_name: str, to_name: str = "latest"):
-    console.print(f"[magenta]snapshot diff scaffold pending implementation: {from_name} -> {to_name}[/magenta]")
+def snapshot_diff_cmd(
+    from_name: str = typer.Option(..., "--from", help="Source snapshot name"),
+    to_name: str = typer.Option("latest", "--to", help="Target snapshot name or 'latest'"),
+    markdown: bool = typer.Option(False, "--markdown", help="Export markdown report"),
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    real_to = latest_snapshot_name() if to_name == "latest" else to_name
+    old = load_snapshot(from_name)
+    new = load_snapshot(real_to)
+    diff_result = compute_diff(old, new)
+
+    out = {
+        "from": from_name,
+        "to": real_to,
+        "diff": diff_result,
+    }
+
+    md_path = None
+    if markdown:
+        md_path = write_snapshot_diff_markdown(from_name=from_name, to_name=real_to, diff_result=diff_result)
+        out["markdown_report"] = str(md_path)
+
+    if json_mode:
+        console.print_json(data=out)
+        raise typer.Exit()
+
+    s = diff_result["summary"]
+    t = Table(title=f"Snapshot Diff: {from_name} -> {real_to}", box=box.SIMPLE_HEAVY)
+    t.add_column("Metric", style="bold cyan")
+    t.add_column("Value")
+    t.add_row("containers_added", str(s["containers_added"]))
+    t.add_row("containers_removed", str(s["containers_removed"]))
+    t.add_row("images_added", str(s["images_added"]))
+    t.add_row("images_removed", str(s["images_removed"]))
+    t.add_row("changes_count", str(s["changes_count"]))
+    t.add_row("drift_score", str(s["drift_score"]))
+    t.add_row("drift_level", str(s["drift_level"]))
+    console.print(t)
+
+    ch = Table(title="Top drift changes", box=box.MINIMAL)
+    ch.add_column("Score")
+    ch.add_column("Type")
+    ch.add_column("Target")
+    for c in diff_result.get("changes", [])[:15]:
+        ch.add_row(
+            str(c.get("score", 0)),
+            str(c.get("type", "")),
+            str(c.get("container") or c.get("image") or "-"),
+        )
+    console.print(ch)
+
+    if md_path:
+        console.print(f"[green]Markdown report:[/green] {md_path}")
 
 
 @app.command()
