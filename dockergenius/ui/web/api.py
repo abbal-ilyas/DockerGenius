@@ -1,11 +1,13 @@
 from __future__ import annotations
-from pathlib import Path
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+import psutil
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from dockergenius.core.engine import run_analysis
@@ -21,8 +23,9 @@ from dockergenius.docker.client import get_client
 from dockergenius.docker.containers import list_containers_full
 from dockergenius.docker.images import list_images_full
 from dockergenius.security.analyzer import audit_containers
-from dockergenius.security.scanner import scan_images
+from dockergenius.security.scanner import scan_images, choose_image_ref
 from dockergenius.remediation.fixer import generate_fix_artifacts
+from dockergenius.utils.config import SNAPSHOT_DIR, ensure_storage
 
 app = FastAPI(title="dockergenius API", version="0.1.0")
 
@@ -33,16 +36,41 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-@app.get("/")
-def index():
-    index_file = STATIC_DIR / "index.html"
-    if not index_file.exists():
+def _page(name: str):
+    f = STATIC_DIR / name
+    if not f.exists():
         raise HTTPException(status_code=404, detail="Frontend not found")
-    return FileResponse(str(index_file))
+    return FileResponse(str(f))
+
 
 class SnapshotSaveRequest(BaseModel):
     name: Optional[str] = Field(default=None, description="Snapshot name. If omitted, UTC timestamp is used.")
     profile: Literal["dev", "staging", "prod", "security"] = "dev"
+
+
+@app.get("/")
+def index():
+    return _page("index.html")
+
+
+@app.get("/advisor")
+def advisor_page():
+    return _page("advisor.html")
+
+
+@app.get("/audit")
+def audit_page():
+    return _page("audit.html")
+
+
+@app.get("/scan")
+def scan_page():
+    return _page("scan.html")
+
+
+@app.get("/snapshots")
+def snapshots_page():
+    return _page("snapshots.html")
 
 
 @app.get("/health")
@@ -50,7 +78,7 @@ def health():
     return {"status": "ok", "service": "dockergenius-api"}
 
 
-@app.get("/advisor")
+@app.get("/advisor/data")
 def advisor(
     profile: str = Query("dev", description="dev|staging|prod|security"),
     top: int = Query(5, ge=1, le=50),
@@ -82,14 +110,38 @@ def containers_audit(fix_script: bool = Query(False)):
         raise HTTPException(status_code=500, detail=f"Audit failed: {exc}")
 
 
+@app.get("/containers/list")
+def containers_list():
+    try:
+        client = get_client()
+        containers = list_containers_full(client)
+        return {"containers": [c.get("name", "unknown") for c in containers]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Container list failed: {exc}")
+
+
 @app.get("/images/scan")
 def images_scan(
     no_cache: bool = Query(False),
     cache_minutes: int = Query(30, ge=1, le=24 * 60),
+    image: Optional[str] = Query(None, description="Optional single image ref"),
 ):
     try:
         client = get_client()
         images = list_images_full(client)
+
+        if image:
+            def _match(img):
+                if image in (img.get("tags") or []):
+                    return True
+                if image in {img.get("id"), img.get("short_id")}:
+                    return True
+                return choose_image_ref(img) == image
+
+            images = [img for img in images if _match(img)]
+            if not images:
+                raise HTTPException(status_code=404, detail="Image not found")
+
         result = scan_images(images, use_cache=not no_cache, cache_minutes=cache_minutes)
         if result.get("tool") == "none":
             raise HTTPException(status_code=503, detail=result.get("error", "No scanner available"))
@@ -98,6 +150,17 @@ def images_scan(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Image scan failed: {exc}")
+
+
+@app.get("/images/list")
+def images_list():
+    try:
+        client = get_client()
+        images = list_images_full(client)
+        refs = [choose_image_ref(img) for img in images]
+        return {"images": refs}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Image list failed: {exc}")
 
 
 @app.post("/snapshot/save")
@@ -139,12 +202,62 @@ def snapshot_diff(
         old = load_snapshot(from_name)
         new = load_snapshot(real_to)
         diff_result = compute_diff(old, new)
-        return {
-            "from": from_name,
-            "to": real_to,
-            "diff": diff_result,
-        }
+        return {"from": from_name, "to": real_to, "diff": diff_result}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Snapshot diff failed: {exc}")
+
+
+@app.get("/snapshot/list")
+def snapshot_list():
+    ensure_storage()
+    if not SNAPSHOT_DIR.exists():
+        return {"snapshots": []}
+    names = sorted([p.stem for p in SNAPSHOT_DIR.glob("*.json")])
+    return {"snapshots": names}
+@app.get("/metrics/system")
+def system_metrics():
+    vmem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    disk = psutil.disk_usage("/")
+    net = psutil.net_io_counters()
+    load = psutil.getloadavg() if hasattr(psutil, "getloadavg") else (0, 0, 0)
+
+    return {
+        "cpu": {
+            "percent": psutil.cpu_percent(interval=0.2),
+            "count": psutil.cpu_count(logical=True),
+            "load_avg": {"1m": load[0], "5m": load[1], "15m": load[2]},
+        },
+        "memory": {
+            "total": vmem.total,
+            "used": vmem.used,
+            "free": vmem.available,
+            "percent": vmem.percent,
+        },
+        "swap": {"total": swap.total, "used": swap.used, "percent": swap.percent},
+        "disk": {
+            "total": disk.total,
+            "used": disk.used,
+            "free": disk.free,
+            "percent": disk.percent,
+        },
+        "net": {"sent": net.bytes_sent, "recv": net.bytes_recv},
+        "boot_time": psutil.boot_time(),
+        "uptime_seconds": int(time.time() - psutil.boot_time()),
+    }
+@app.get("/docker/usage")
+def docker_usage():
+    client = get_client()
+    df = client.df()  # docker system df
+    return df
+
+@app.post("/docker/cleanup")
+def docker_cleanup(dry_run: bool = Query(True)):
+    # dry_run only → no destructive actions
+    return {"dry_run": dry_run, "message": "Cleanup is disabled (dry-run only)."}
+
+@app.get("/storage")
+def storage_page():
+    return _page("storage.html")

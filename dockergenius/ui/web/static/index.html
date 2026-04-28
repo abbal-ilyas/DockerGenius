@@ -1,202 +1,192 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>DockerGenius Dashboard</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Overview</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
   <style>
-    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 24px; background:#0b1220; color:#e6edf3; }
-    h1 { margin: 0 0 8px; }
-    .muted { color:#9fb0c3; margin-bottom: 20px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
-    .card { background:#111a2b; border:1px solid #23324d; border-radius:12px; padding:16px; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-    input, select, button, textarea {
-      background:#0f1728; color:#e6edf3; border:1px solid #2a3a58; border-radius:8px; padding:8px 10px;
-    }
-    button { cursor:pointer; }
-    button:hover { border-color:#3f5c8f; }
-    pre { background:#0a1020; border:1px solid #1d2a44; border-radius:8px; padding:10px; max-height:320px; overflow:auto; }
-    .kpi { font-size: 28px; font-weight: 700; }
-    .ok { color:#48d597; } .warn { color:#f7c65f; } .bad { color:#ff6b6b; }
-    table { width:100%; border-collapse: collapse; margin-top:8px; }
-    th, td { border-bottom:1px solid #243452; text-align:left; padding:6px; font-size:13px; }
-    .small { font-size:12px; color:#9fb0c3; }
+    .metric{font-size:22px;font-weight:700}
+    .sub{color:var(--muted);font-size:12px}
+    .badge{padding:2px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px}
+    .grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
+    canvas{max-height:220px}
+    .progress{height:8px;background:#0b1324;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+    .bar{height:100%;background:linear-gradient(90deg,#3a6ff7,#4f9cfb)}
   </style>
 </head>
 <body>
-  <h1>DockerGenius Dashboard</h1>
-  <div class="muted">Live view powered by FastAPI endpoints</div>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
 
-  <div class="grid">
-    <section class="card">
-      <h3>Health</h3>
-      <div id="health" class="small">Loading...</div>
-      <div class="row"><button onclick="loadHealth()">Refresh</button></div>
-    </section>
-
-    <section class="card">
-      <h3>Advisor</h3>
-      <div class="row">
-        <select id="profile">
-          <option>dev</option><option>staging</option><option selected>prod</option><option>security</option>
-        </select>
-        <input id="top" type="number" min="1" max="20" value="5" />
-        <button onclick="loadAdvisor()">Run</button>
+  <main class="content">
+    <div class="header">
+      <div>
+        <h1>Overview</h1>
+        <div class="subtitle">Modern monitoring dashboard</div>
       </div>
-      <div id="advisor-kpi" class="small">No data</div>
-      <table id="advisor-table"></table>
-    </section>
-
-    <section class="card">
-      <h3>Containers Audit</h3>
-      <div class="row">
-        <label><input id="fix_script" type="checkbox" /> Generate fix script</label>
-        <button onclick="loadAudit()">Run</button>
+      <div class="toolbar">
+        <label class="chip"><input id="auto_refresh" type="checkbox" checked/> Auto‑refresh 15s</label>
+        <button onclick="refreshAll()">Refresh</button>
       </div>
-      <div id="audit-kpi" class="small">No data</div>
-      <table id="audit-table"></table>
-    </section>
+    </div>
 
-    <section class="card">
-      <h3>Images Scan</h3>
-      <div class="row">
-        <label><input id="no_cache" type="checkbox" /> no-cache</label>
-        <input id="cache_minutes" type="number" min="1" max="1440" value="30" />
-        <button onclick="loadScan()">Run</button>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">CPU Usage</div>
+        <div id="cpu-val" class="value">—</div>
+        <div class="progress"><div id="cpu-bar" class="bar" style="width:0%"></div></div>
       </div>
-      <div id="scan-kpi" class="small">No data</div>
-      <table id="scan-table"></table>
-    </section>
-
-    <section class="card">
-      <h3>Snapshot Save</h3>
-      <div class="row">
-        <input id="snap_name" placeholder="name (optional)" />
-        <select id="snap_profile">
-          <option>dev</option><option>staging</option><option selected>prod</option><option>security</option>
-        </select>
-        <button onclick="saveSnapshot()">Save</button>
+      <div class="stat">
+        <div class="label">Memory Usage</div>
+        <div id="mem-val" class="value">—</div>
+        <div class="progress"><div id="mem-bar" class="bar" style="width:0%"></div></div>
       </div>
-      <pre id="snap-save-out">No data</pre>
-    </section>
-
-    <section class="card">
-      <h3>Snapshot Diff</h3>
-      <div class="row">
-        <input id="diff_from" placeholder="from (e.g baseline)" />
-        <input id="diff_to" placeholder="to (e.g after_change or latest)" value="latest" />
-        <button onclick="diffSnapshot()">Diff</button>
+      <div class="stat">
+        <div class="label">Disk Usage</div>
+        <div id="disk-val" class="value">—</div>
+        <div class="progress"><div id="disk-bar" class="bar" style="width:0%"></div></div>
       </div>
-      <pre id="snap-diff-out">No data</pre>
-    </section>
-  </div>
+      <div class="stat">
+        <div class="label">Network I/O</div>
+        <div id="net-val" class="value">—</div>
+        <div class="sub">Total since boot</div>
+      </div>
+    </div>
 
-  <script>
-    const api = "";
+    <div class="grid">
+      <section class="card">
+        <h3>Health</h3>
+        <div id="health" class="kpi">Loading...</div>
+      </section>
 
-    async function jget(url, opts={}) {
-      const r = await fetch(api + url, opts);
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
-      return data;
-    }
+      <section class="card">
+        <h3>Advisor Summary</h3>
+        <div id="advisor-kpi" class="kpi">—</div>
+        <span id="advisor-risk" class="badge">Risk</span>
+      </section>
 
-    function esc(s){ return String(s ?? "").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+      <section class="card">
+        <h3>Audit Summary</h3>
+        <div id="audit-kpi" class="kpi">—</div>
+      </section>
 
-    async function loadHealth() {
-      const el = document.getElementById("health");
-      try {
-        const d = await jget("/health");
-        el.innerHTML = `<span class="ok">●</span> ${esc(d.status)} - ${esc(d.service)}`;
-      } catch (e) {
-        el.innerHTML = `<span class="bad">● ${esc(e.message)}</span>`;
-      }
-    }
+      <section class="card">
+        <h3>Scan Summary</h3>
+        <div id="scan-kpi" class="kpi">—</div>
+      </section>
+    </div>
 
-    async function loadAdvisor() {
-      const p = document.getElementById("profile").value;
-      const top = document.getElementById("top").value;
-      const kpi = document.getElementById("advisor-kpi");
-      const table = document.getElementById("advisor-table");
-      try {
-        const d = await jget(`/advisor?profile=${encodeURIComponent(p)}&top=${encodeURIComponent(top)}`);
-        const riskClass = d.global_risk === "HIGH" ? "bad" : (d.global_risk === "MEDIUM" ? "warn" : "ok");
-        kpi.innerHTML = `Score: <b>${d.global_score}</b> | Risk: <span class="${riskClass}"><b>${esc(d.global_risk)}</b></span> | Findings: <b>${d.total_findings}</b>`;
-        table.innerHTML = `<tr><th>Score</th><th>Scope</th><th>Insight</th><th>Move</th></tr>` +
-          (d.top_actions || []).map(x => `<tr><td>${x.score}</td><td>${esc(x.scope)}</td><td>${esc(x.insight)}</td><td>${esc(x.move)}</td></tr>`).join("");
-      } catch (e) {
-        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
-        table.innerHTML = "";
-      }
-    }
+    <div class="grid-2" style="margin-top:16px">
+      <section class="card">
+        <h3>CPU (last 30)</h3>
+        <canvas id="cpuChart"></canvas>
+      </section>
+      <section class="card">
+        <h3>Memory (last 30)</h3>
+        <canvas id="memChart"></canvas>
+      </section>
+      <section class="card">
+        <h3>Disk (last 30)</h3>
+        <canvas id="diskChart"></canvas>
+      </section>
+      <section class="card">
+        <h3>Network (recv/sent)</h3>
+        <canvas id="netChart"></canvas>
+      </section>
+    </div>
+  </main>
+</div>
 
-    async function loadAudit() {
-      const fix = document.getElementById("fix_script").checked;
-      const kpi = document.getElementById("audit-kpi");
-      const table = document.getElementById("audit-table");
-      try {
-        const d = await jget(`/containers/audit?fix_script=${fix}`);
-        kpi.innerHTML = `Findings: <b>${d.summary.findings}</b> | critical: ${d.summary.critical} high: ${d.summary.high} medium: ${d.summary.medium}`;
-        if (d.remediation?.script_path) kpi.innerHTML += ` | Script: <code>${esc(d.remediation.script_path)}</code>`;
-        table.innerHTML = `<tr><th>Severity</th><th>Container</th><th>Check</th><th>Insight</th></tr>` +
-          (d.findings || []).slice(0, 20).map(x => `<tr><td>${esc(x.severity)}</td><td>${esc(x.container)}</td><td>${esc(x.check)}</td><td>${esc(x.insight)}</td></tr>`).join("");
-      } catch (e) {
-        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
-        table.innerHTML = "";
-      }
-    }
+<script src="/static/app.js"></script>
+<script>
+const history = { cpu:[], mem:[], disk:[], netIn:[], netOut:[], labels:[] };
 
-    async function loadScan() {
-      const noCache = document.getElementById("no_cache").checked;
-      const cm = document.getElementById("cache_minutes").value;
-      const kpi = document.getElementById("scan-kpi");
-      const table = document.getElementById("scan-table");
-      try {
-        const d = await jget(`/images/scan?no_cache=${noCache}&cache_minutes=${encodeURIComponent(cm)}`);
-        const s = d.summary;
-        kpi.innerHTML = `Tool: <b>${esc(d.tool)}</b> | total: <b>${s.total_vulns}</b> | critical: <b class="bad">${s.CRITICAL}</b> high: <b class="warn">${s.HIGH}</b>`;
-        table.innerHTML = `<tr><th>Image</th><th>Risk</th><th>Total</th><th>Critical</th><th>High</th><th>Medium</th></tr>` +
-          (d.images || []).slice(0, 15).map(x => `<tr><td>${esc(x.image)}</td><td>${x.risk_points}</td><td>${x.vuln_count}</td><td>${x.counts.CRITICAL}</td><td>${x.counts.HIGH}</td><td>${x.counts.MEDIUM}</td></tr>`).join("");
-      } catch (e) {
-        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
-        table.innerHTML = "";
-      }
-    }
+function chartBase(ctx, label, color){
+  return new Chart(ctx, {
+    type: "line",
+    data: { labels: [], datasets:[{label, data:[], borderColor:color, backgroundColor:"rgba(79,156,251,.1)", tension:.3, fill:true}]},
+    options: { plugins:{legend:{display:false}}, scales:{x:{display:false}, y:{ticks:{color:"#9fb0c3"}, grid:{color:"rgba(255,255,255,0.05)"}}}}
+  });
+}
 
-    async function saveSnapshot() {
-      const name = document.getElementById("snap_name").value.trim();
-      const profile = document.getElementById("snap_profile").value;
-      const out = document.getElementById("snap-save-out");
-      try {
-        const d = await jget("/snapshot/save", {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({name: name || null, profile})
-        });
-        out.textContent = JSON.stringify(d, null, 2);
-      } catch (e) {
-        out.textContent = e.message;
-      }
-    }
+const cpuChart = chartBase(document.getElementById("cpuChart"), "CPU %", "#4f9cfb");
+const memChart = chartBase(document.getElementById("memChart"), "RAM %", "#3ddc97");
+const diskChart = chartBase(document.getElementById("diskChart"), "Disk %", "#f6c453");
 
-    async function diffSnapshot() {
-      const from = document.getElementById("diff_from").value.trim();
-      const to = document.getElementById("diff_to").value.trim() || "latest";
-      const out = document.getElementById("snap-diff-out");
-      if (!from) { out.textContent = "from is required"; return; }
-      try {
-        const d = await jget(`/snapshot/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-        out.textContent = JSON.stringify(d, null, 2);
-      } catch (e) {
-        out.textContent = e.message;
-      }
-    }
+const netChart = new Chart(document.getElementById("netChart"), {
+  type:"line",
+  data:{labels:[], datasets:[
+    {label:"Recv", data:[], borderColor:"#4f9cfb", tension:.3, fill:false},
+    {label:"Sent", data:[], borderColor:"#f6c453", tension:.3, fill:false}
+  ]},
+  options:{plugins:{legend:{labels:{color:"#9fb0c3"}}}, scales:{x:{display:false}, y:{ticks:{color:"#9fb0c3"}, grid:{color:"rgba(255,255,255,0.05)"}}}}
+});
 
-    loadHealth();
-    loadAdvisor();
-    loadAudit();
-    loadScan();
-  </script>
+function pushHistory(){
+  if(history.labels.length > 30){
+    for(const k in history) history[k].shift();
+  }
+}
+
+async function refreshAll(){
+  const health = await jget("/health");
+  $("health").innerHTML = `<span class="ok">●</span> ${health.status}`;
+
+  const m = await jget("/metrics/system");
+  $("cpu-val").textContent = `${m.cpu.percent}% (cores ${m.cpu.count})`;
+  $("mem-val").textContent = `${Math.round(m.memory.percent)}%`;
+  $("disk-val").textContent = `${Math.round(m.disk.percent)}%`;
+  $("net-val").textContent = `${Math.round(m.net.recv/1e6)}MB ↓ / ${Math.round(m.net.sent/1e6)}MB ↑`;
+
+  $("cpu-bar").style.width = `${m.cpu.percent}%`;
+  $("mem-bar").style.width = `${m.memory.percent}%`;
+  $("disk-bar").style.width = `${m.disk.percent}%`;
+
+  history.labels.push("");
+  history.cpu.push(m.cpu.percent);
+  history.mem.push(m.memory.percent);
+  history.disk.push(m.disk.percent);
+  history.netIn.push(m.net.recv/1e6);
+  history.netOut.push(m.net.sent/1e6);
+  pushHistory();
+
+  cpuChart.data.labels = history.labels;
+  cpuChart.data.datasets[0].data = history.cpu;
+  memChart.data.labels = history.labels;
+  memChart.data.datasets[0].data = history.mem;
+  diskChart.data.labels = history.labels;
+  diskChart.data.datasets[0].data = history.disk;
+  netChart.data.labels = history.labels;
+  netChart.data.datasets[0].data = history.netIn.map((v,i)=>v-history.netIn[0]);
+  netChart.data.datasets[1].data = history.netOut.map((v,i)=>v-history.netOut[0]);
+
+  cpuChart.update(); memChart.update(); diskChart.update(); netChart.update();
+
+  const adv = await jget("/advisor/data?profile=prod&top=5");
+  $("advisor-kpi").textContent = `Score ${adv.global_score} | Findings ${adv.total_findings}`;
+  $("advisor-risk").textContent = adv.global_risk;
+
+  const audit = await jget("/containers/audit");
+  $("audit-kpi").textContent = `Findings ${audit.summary.findings} (high ${audit.summary.high})`;
+
+  const scan = await jget("/images/scan?no_cache=false&cache_minutes=30");
+  $("scan-kpi").textContent = `CVE total ${scan.summary.total_vulns}, critical ${scan.summary.CRITICAL}`;
+}
+
+refreshAll();
+setInterval(()=>{ if($("auto_refresh").checked) refreshAll(); }, 15000);
+</script>
 </body>
 </html>
