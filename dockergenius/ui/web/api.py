@@ -23,6 +23,9 @@ from dockergenius.core.diff import compute_diff
 from dockergenius.docker.client import get_client
 from dockergenius.docker.containers import list_containers_full
 from dockergenius.docker.images import list_images_full
+from dockergenius.docker.networks import list_networks_full
+from dockergenius.docker.system import get_system_summary
+from dockergenius.docker.volumes import list_volumes_full
 from dockergenius.security.analyzer import audit_containers
 from dockergenius.security.scanner import scan_images, choose_image_ref
 from dockergenius.remediation.fixer import generate_fix_artifacts
@@ -47,6 +50,29 @@ def _page(name: str):
 class SnapshotSaveRequest(BaseModel):
     name: Optional[str] = Field(default=None, description="Snapshot name. If omitted, UTC timestamp is used.")
     profile: Literal["dev", "staging", "prod", "security"] = "dev"
+
+
+class ContainerActionRequest(BaseModel):
+    identifier: str = Field(..., description="Container name or id")
+    action: Literal["start", "stop", "restart", "pause", "unpause", "remove"]
+
+
+class ImageActionRequest(BaseModel):
+    reference: str = Field(..., description="Image reference, tag, or id")
+    action: Literal["remove", "pull"]
+
+
+class NetworkActionRequest(BaseModel):
+    name: str
+    action: Literal["create", "remove", "connect", "disconnect"]
+    driver: Optional[str] = None
+    container: Optional[str] = None
+
+
+class VolumeActionRequest(BaseModel):
+    name: str
+    action: Literal["create", "remove", "prune"]
+    driver: Optional[str] = None
 
 
 # ---------- Pages ----------
@@ -78,6 +104,31 @@ def snapshots_page():
 @app.get("/storage")
 def storage_page():
     return _page("storage.html")
+
+
+@app.get("/containers")
+def containers_page():
+    return _page("containers.html")
+
+
+@app.get("/images")
+def images_page():
+    return _page("images.html")
+
+
+@app.get("/networks")
+def networks_page():
+    return _page("networks.html")
+
+
+@app.get("/volumes")
+def volumes_page():
+    return _page("volumes.html")
+
+
+@app.get("/system")
+def system_page():
+    return _page("system.html")
 
 
 # ---------- Core ----------
@@ -131,6 +182,63 @@ def containers_list():
         raise HTTPException(status_code=500, detail=f"Container list failed: {exc}")
 
 
+@app.get("/containers/data")
+def containers_data():
+    try:
+        client = get_client()
+        containers = list_containers_full(client)
+        return {
+            "summary": {
+                "total": len(containers),
+                "running": sum(1 for c in containers if c.get("running")),
+                "paused": sum(1 for c in containers if c.get("status") == "paused"),
+                "stopped": sum(1 for c in containers if not c.get("running") and c.get("status") != "paused"),
+            },
+            "containers": containers,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Container data failed: {exc}")
+
+
+@app.post("/containers/action")
+def containers_action(payload: ContainerActionRequest, dry_run: bool = Query(False)):
+    try:
+        client = get_client()
+        container = client.containers.get(payload.identifier)
+
+        preview = {
+            "identifier": payload.identifier,
+            "name": getattr(container, "name", payload.identifier),
+            "status": getattr(container, "status", "unknown"),
+            "action": payload.action,
+        }
+
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "preview": f"Would {payload.action} container {preview['name']} (status: {preview['status']})",
+                **preview,
+            }
+
+        if payload.action == "start":
+            container.start()
+        elif payload.action == "stop":
+            container.stop()
+        elif payload.action == "restart":
+            container.restart()
+        elif payload.action == "pause":
+            container.pause()
+        elif payload.action == "unpause":
+            container.unpause()
+        elif payload.action == "remove":
+            container.remove(force=True)
+
+        return {"ok": True, "dry_run": False, "action": payload.action, "identifier": payload.identifier, "name": preview["name"]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Container action failed: {exc}")
+
+
 @app.get("/images/scan")
 def images_scan(
     no_cache: bool = Query(False),
@@ -174,6 +282,184 @@ def images_list():
         return {"images": refs}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Image list failed: {exc}")
+
+
+@app.get("/images/data")
+def images_data():
+    try:
+        client = get_client()
+        images = list_images_full(client)
+        return {
+            "summary": {
+                "total": len(images),
+                "total_size": sum(int(img.get("size", 0) or 0) for img in images),
+            },
+            "images": [{**img, "ref": choose_image_ref(img)} for img in images],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Image data failed: {exc}")
+
+
+@app.post("/images/action")
+def images_action(payload: ImageActionRequest, dry_run: bool = Query(False)):
+    try:
+        client = get_client()
+        if payload.action == "pull":
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "preview": f"Would pull image {payload.reference}",
+                    "action": "pull",
+                    "reference": payload.reference,
+                }
+            client.images.pull(payload.reference)
+            return {"ok": True, "dry_run": False, "action": "pull", "reference": payload.reference}
+
+        image = client.images.get(payload.reference)
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "preview": f"Would remove image {payload.reference}",
+                "action": "remove",
+                "reference": payload.reference,
+                "tags": image.tags or [],
+            }
+        image.remove(force=True)
+        return {"ok": True, "dry_run": False, "action": "remove", "reference": payload.reference}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Image action failed: {exc}")
+
+
+@app.get("/networks/data")
+def networks_data():
+    try:
+        client = get_client()
+        networks = list_networks_full(client)
+        return {
+            "summary": {
+                "total": len(networks),
+                "internal": sum(1 for n in networks if n.get("internal")),
+                "attachable": sum(1 for n in networks if n.get("attachable")),
+            },
+            "networks": networks,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Network data failed: {exc}")
+
+
+@app.post("/networks/action")
+def networks_action(payload: NetworkActionRequest, dry_run: bool = Query(False)):
+    try:
+        client = get_client()
+        if payload.action == "create":
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "preview": f"Would create network {payload.name} with driver {payload.driver or 'bridge'}",
+                    "action": "create",
+                    "name": payload.name,
+                    "driver": payload.driver or "bridge",
+                }
+            network = client.networks.create(payload.name, driver=payload.driver or "bridge")
+            return {"ok": True, "dry_run": False, "action": "create", "name": payload.name, "id": network.id}
+
+        network = client.networks.get(payload.name)
+        if dry_run:
+            target = payload.container or "<no container>"
+            return {
+                "ok": True,
+                "dry_run": True,
+                "preview": f"Would {payload.action} network {payload.name}" + (f" for container {target}" if payload.action in {"connect", "disconnect"} else ""),
+                "action": payload.action,
+                "name": payload.name,
+                "container": payload.container,
+            }
+        if payload.action == "remove":
+            network.remove()
+        elif payload.action == "connect":
+            if not payload.container:
+                raise HTTPException(status_code=400, detail="container is required for connect")
+            network.connect(payload.container)
+        elif payload.action == "disconnect":
+            if not payload.container:
+                raise HTTPException(status_code=400, detail="container is required for disconnect")
+            network.disconnect(payload.container, force=True)
+        return {"ok": True, "dry_run": False, "action": payload.action, "name": payload.name, "container": payload.container}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Network action failed: {exc}")
+
+
+@app.get("/volumes/data")
+def volumes_data():
+    try:
+        client = get_client()
+        volumes = list_volumes_full(client)
+        return {
+            "summary": {
+                "total": len(volumes),
+                "total_size": sum(int(v.get("size", 0) or 0) for v in volumes),
+                "with_usage": sum(1 for v in volumes if int(v.get("ref_count", 0) or 0) > 0),
+            },
+            "volumes": volumes,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Volume data failed: {exc}")
+
+
+@app.post("/volumes/action")
+def volumes_action(payload: VolumeActionRequest, dry_run: bool = Query(False)):
+    try:
+        client = get_client()
+        if payload.action == "create":
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "preview": f"Would create volume {payload.name} with driver {payload.driver or 'local'}",
+                    "action": "create",
+                    "name": payload.name,
+                    "driver": payload.driver or "local",
+                }
+            volume = client.volumes.create(name=payload.name, driver=payload.driver or "local")
+            return {"ok": True, "dry_run": False, "action": "create", "name": payload.name, "id": volume.id}
+        if payload.action == "prune":
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "preview": "Would prune unused Docker volumes",
+                    "action": "prune",
+                }
+            result = client.volumes.prune()
+            return {"ok": True, "dry_run": False, "action": "prune", "result": result}
+
+        volume = client.volumes.get(payload.name)
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "preview": f"Would remove volume {payload.name}",
+                "action": "remove",
+                "name": payload.name,
+            }
+        volume.remove()
+        return {"ok": True, "dry_run": False, "action": "remove", "name": payload.name}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Volume action failed: {exc}")
+
+
+@app.get("/system/data")
+def system_data():
+    try:
+        client = get_client()
+        return get_system_summary(client)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"System data failed: {exc}")
 
 
 @app.post("/snapshot/save")

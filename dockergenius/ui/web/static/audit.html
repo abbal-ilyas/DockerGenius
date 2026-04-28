@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Containers Audit</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a class="active" href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Containers Audit</h1>
+        <div class="subtitle">Security-oriented inspection for Docker containers with optional remediation artifacts.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="audit-count">Loading...</div>
+        <div class="hero-pill" id="audit-critical">Loading...</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="row">
+        <label><input id="fix_script" type="checkbox"/> generate fix script</label>
+        <label><input id="dry_run" type="checkbox" checked/> dry-run</label>
+        <button class="btn-primary" onclick="runAudit()">Run</button>
+      </div>
+      <div id="audit-summary"></div>
+      <div id="audit-findings"></div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script>
+async function runAudit(){
+  const fixScript = $("fix_script").checked;
+  const dryRun = $("dry_run").checked;
+  const d = await jget(`/containers/audit?fix_script=${fixScript}&dry_run=${dryRun}`);
+  $("audit-count").textContent = `${d.summary.findings} findings`;
+  $("audit-critical").textContent = `${d.summary.critical} critical`;
+  renderKeyValues("audit-summary", d.summary);
+  renderTable("audit-findings", d.findings || [], [
+    { label: "Severity", get: (row) => row.severity },
+    { label: "Container", get: (row) => row.container },
+    { label: "Check", get: (row) => row.check },
+    { label: "Insight", get: (row) => row.insight },
+    { label: "Move", get: (row) => row.move },
+  ]);
+}
+runAudit().catch((err) => renderError("audit-findings", err));
+</script>
+</body>
+</html>

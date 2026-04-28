@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Advisor</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a class="active" href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Advisor</h1>
+        <div class="subtitle">Profile-driven Docker guidance with a ranked list of the most useful fixes.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="advisor-score">Loading...</div>
+        <div class="hero-pill" id="advisor-risk">Loading...</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="row">
+        <select id="advisor_profile"><option>dev</option><option>staging</option><option selected>prod</option><option>security</option></select>
+        <input id="advisor_top" type="number" min="1" max="50" value="5"/>
+        <button class="btn-primary" onclick="runAdvisor()">Run</button>
+      </div>
+      <div id="advisor-summary"></div>
+      <div id="advisor-actions"></div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script>
+async function runAdvisor(){
+  const profile = $("advisor_profile").value;
+  const top = $("advisor_top").value;
+  const d = await jget(`/advisor/data?profile=${encodeURIComponent(profile)}&top=${encodeURIComponent(top)}`);
+  $("advisor-score").textContent = `Score ${d.global_score}`;
+  $("advisor-risk").textContent = d.global_risk;
+  renderKeyValues("advisor-summary", {
+    Profile: d.profile,
+    Score: d.global_score,
+    Risk: d.global_risk,
+    Findings: d.total_findings,
+  });
+  const ranked = (d.top_actions || []).map((row, index) => ({ ...row, rank: index + 1 }));
+  renderTable("advisor-actions", ranked, [
+    { label: "Rank", get: (row) => row.rank },
+    { label: "Score", get: (row) => row.score },
+    { label: "Scope", get: (row) => row.scope },
+    { label: "Insight", get: (row) => row.insight },
+    { label: "Move", get: (row) => row.move },
+  ]);
+}
+runAdvisor().catch((err) => renderError("advisor-actions", err));
+</script>
+</body>
+</html>

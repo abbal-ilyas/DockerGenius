@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Containers</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a class="active" href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Containers</h1>
+        <div class="subtitle">Lifecycle, status, ports, mounts, restart policy, and network wiring for every container.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="containers-count">Loading...</div>
+        <div class="hero-pill" id="containers-running">Loading...</div>
+      </div>
+    </div>
+
+    <div class="scope-grid">
+      <section class="scope-panel">
+        <h3>State</h3>
+        <div class="scope-meta" id="containers-state"></div>
+      </section>
+      <section class="scope-panel">
+        <h3>Management view</h3>
+        <div class="sub">Use this page to inspect container identity, runtime state, and attached resources.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Container actions</h3>
+      <div class="row">
+        <input id="container-id" placeholder="name or id" />
+        <select id="container-action">
+          <option value="start">start</option>
+          <option value="stop">stop</option>
+          <option value="restart">restart</option>
+          <option value="pause">pause</option>
+          <option value="unpause">unpause</option>
+          <option value="remove">remove</option>
+        </select>
+        <label><input id="container-dry-run" type="checkbox" checked /> dry-run first</label>
+        <button class="btn-primary" onclick="runContainerAction()">Run</button>
+      </div>
+      <div id="container-action-out"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Container inventory</h3>
+      <div id="containers-table"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+async function loadPage(){
+  const data = await jget("/containers/data");
+  $("containers-count").textContent = `${data.summary.total} containers`;
+  $("containers-running").textContent = `${data.summary.running} running`;
+  $("containers-state").innerHTML = [
+    badge(`Running ${data.summary.running}`, "ok"),
+    badge(`Paused ${data.summary.paused}`, "warn"),
+    badge(`Stopped ${data.summary.stopped}`, "bad"),
+  ].join("");
+
+  renderTable("containers-table", data.containers, [
+    { label: "Name", get: (row) => row.name },
+    { label: "Status", get: (row) => row.status },
+    { label: "Image", get: (row) => row.image },
+    { label: "Restart", get: (row) => row.restart_policy || "-" },
+    { label: "Networks", get: (row) => (row.networks || []).join(", ") || "-" },
+    { label: "Ports", get: (row) => (row.ports || []).map((p) => `${p.host_ip || "0.0.0.0"}:${p.host_port || "-"}->${p.container_port}`).join(", ") || "-" },
+    { label: "Mounts", get: (row) => (row.mounts || []).length },
+  ]);
+}
+async function runContainerAction(){
+  const identifier = $("container-id").value.trim();
+  const action = $("container-action").value;
+  if (!identifier) return renderError("container-action-out", new Error("Enter a container name or id"));
+  const dryRun = $("container-dry-run").checked;
+  const message = `Confirm ${action} on container ${identifier}?`;
+  await previewThenApply("/containers/action", { identifier, action }, "container-action-out", loadPage, message, dryRun);
+}
+loadPage().catch((err) => renderError("containers-table", err));
+</script>
+</body>
+</html>

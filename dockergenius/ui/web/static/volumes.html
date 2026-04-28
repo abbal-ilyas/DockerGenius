@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Volumes</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a class="active" href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Volumes</h1>
+        <div class="subtitle">Driver, mountpoint, ref-count, and usage information for persistent data volumes.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="volumes-count">Loading...</div>
+        <div class="hero-pill" id="volumes-size">Loading...</div>
+      </div>
+    </div>
+
+    <div class="scope-grid">
+      <section class="scope-panel">
+        <h3>Storage view</h3>
+        <div class="scope-meta" id="volumes-state"></div>
+      </section>
+      <section class="scope-panel">
+        <h3>Management view</h3>
+        <div class="sub">Use this page to identify unused volumes, growth pressure, and data placement.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Volume actions</h3>
+      <div class="row">
+        <input id="volume-name" placeholder="volume name" />
+        <select id="volume-action">
+          <option value="create">create</option>
+          <option value="remove">remove</option>
+          <option value="prune">prune</option>
+        </select>
+        <input id="volume-driver" placeholder="driver (create only, default local)" />
+        <label><input id="volume-dry-run" type="checkbox" checked /> dry-run first</label>
+        <button class="btn-primary" onclick="runVolumeAction()">Run</button>
+      </div>
+      <div id="volume-action-out"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Volume inventory</h3>
+      <div id="volumes-table"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+async function loadPage(){
+  const data = await jget("/volumes/data");
+  $("volumes-count").textContent = `${data.summary.total} volumes`;
+  $("volumes-size").textContent = fmtBytes(data.summary.total_size);
+  $("volumes-state").innerHTML = [
+    badge(`In use ${data.summary.with_usage}`, "ok"),
+    badge(`Total size ${fmtBytes(data.summary.total_size)}`),
+  ].join("");
+
+  renderTable("volumes-table", data.volumes, [
+    { label: "Name", get: (row) => row.name },
+    { label: "Driver", get: (row) => row.driver },
+    { label: "Scope", get: (row) => row.scope },
+    { label: "Ref Count", get: (row) => fmtCount(row.ref_count) },
+    { label: "Size", get: (row) => fmtBytes(row.size) },
+    { label: "Created", get: (row) => fmtDate(row.created_at) },
+    { label: "Mountpoint", get: (row) => row.mountpoint || "-" },
+  ]);
+}
+async function runVolumeAction(){
+  const name = $("volume-name").value.trim();
+  const action = $("volume-action").value;
+  const driver = $("volume-driver").value.trim();
+  if (action !== "prune" && !name) return renderError("volume-action-out", new Error("Enter a volume name"));
+  const dryRun = $("volume-dry-run").checked;
+  const message = `Confirm ${action} on volume ${name || "unused volumes"}?`;
+  await previewThenApply("/volumes/action", { name: name || "", action, driver: driver || null }, "volume-action-out", loadPage, message, dryRun);
+}
+loadPage().catch((err) => renderError("volumes-table", err));
+</script>
+</body>
+</html>

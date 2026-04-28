@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Images</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a class="active" href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Images</h1>
+        <div class="subtitle">Tags, digests, size, and creation metadata for the local image catalogue.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="images-count">Loading...</div>
+        <div class="hero-pill" id="images-size">Loading...</div>
+      </div>
+    </div>
+
+    <div class="scope-grid">
+      <section class="scope-panel">
+        <h3>Inventory</h3>
+        <div class="scope-meta" id="images-state"></div>
+      </section>
+      <section class="scope-panel">
+        <h3>Management view</h3>
+        <div class="sub">Use this page to compare image size pressure, digest coverage, and tag hygiene.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Image actions</h3>
+      <div class="row">
+        <input id="image-ref" placeholder="tag, digest, or id" />
+        <select id="image-action">
+          <option value="pull">pull</option>
+          <option value="remove">remove</option>
+        </select>
+        <label><input id="image-dry-run" type="checkbox" checked /> dry-run first</label>
+        <button class="btn-primary" onclick="runImageAction()">Run</button>
+      </div>
+      <div class="sub">Pull uses the reference as provided. Remove is forced.</div>
+      <div id="image-action-out"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Image inventory</h3>
+      <div id="images-table"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+async function loadPage(){
+  const data = await jget("/images/data");
+  $("images-count").textContent = `${data.summary.total} images`;
+  $("images-size").textContent = fmtBytes(data.summary.total_size);
+  $("images-state").innerHTML = [
+    badge(`Total ${data.summary.total}`, "ok"),
+    badge(`Size ${fmtBytes(data.summary.total_size)}`),
+  ].join("");
+
+  renderTable("images-table", data.images, [
+    { label: "Ref", get: (row) => row.ref },
+    { label: "Tags", get: (row) => (row.tags || []).join(", ") || "<none>" },
+    { label: "Size", get: (row) => fmtBytes(row.size) },
+    { label: "Created", get: (row) => fmtDate(row.created) },
+    { label: "Digests", get: (row) => (row.repo_digests || []).length },
+  ]);
+}
+async function runImageAction(){
+  const reference = $("image-ref").value.trim();
+  const action = $("image-action").value;
+  if (!reference) return renderError("image-action-out", new Error("Enter an image reference"));
+  const dryRun = $("image-dry-run").checked;
+  const message = `Confirm ${action} for image ${reference}?`;
+  await previewThenApply("/images/action", { reference, action }, "image-action-out", loadPage, message, dryRun);
+}
+loadPage().catch((err) => renderError("images-table", err));
+</script>
+</body>
+</html>

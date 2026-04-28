@@ -9,6 +9,9 @@ from rich import box
 from dockergenius.docker.client import get_client
 from dockergenius.docker.containers import list_containers_full
 from dockergenius.docker.images import list_images_full
+from dockergenius.docker.networks import list_networks_full
+from dockergenius.docker.system import get_system_summary
+from dockergenius.docker.volumes import list_volumes_full
 from dockergenius.core.engine import run_analysis
 from dockergenius.core.scorer import PROFILES
 from dockergenius.core.snapshot import build_snapshot, save_snapshot, load_snapshot, latest_snapshot_name
@@ -25,6 +28,146 @@ console = Console()
 @app.command()
 def doctor():
     console.print("[green]dockergenius is installed and runnable[/green]")
+
+
+@app.command("containers-list")
+def containers_list(
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    client = get_client()
+    containers = list_containers_full(client)
+
+    if json_mode:
+        console.print_json(data={"containers": containers})
+        raise typer.Exit()
+
+    table = Table(title="Docker Containers", box=box.SIMPLE_HEAVY)
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Status")
+    table.add_column("Image")
+    table.add_column("Networks")
+    table.add_column("Ports")
+    for item in containers:
+        ports = ", ".join(
+            f"{p.get('host_ip') or '0.0.0.0'}:{p.get('host_port') or '-'}->{p.get('container_port')}"
+            for p in item.get("ports", [])
+        ) or "-"
+        table.add_row(
+            str(item.get("name", "-")),
+            str(item.get("status", "-")),
+            str(item.get("image", "-")),
+            ", ".join(item.get("networks", []) or []) or "-",
+            ports,
+        )
+    console.print(table)
+
+
+@app.command("images-list")
+def images_list(
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    client = get_client()
+    images = list_images_full(client)
+
+    if json_mode:
+        console.print_json(data={"images": images})
+        raise typer.Exit()
+
+    table = Table(title="Docker Images", box=box.SIMPLE_HEAVY)
+    table.add_column("Tags", style="bold cyan")
+    table.add_column("Size")
+    table.add_column("Created")
+    table.add_column("Digests")
+    for item in images:
+        table.add_row(
+            ", ".join(item.get("tags", []) or []),
+            str(item.get("size", 0)),
+            str(item.get("created", "-")),
+            str(len(item.get("repo_digests", []) or [])),
+        )
+    console.print(table)
+
+
+@app.command("networks-list")
+def networks_list(
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    client = get_client()
+    networks = list_networks_full(client)
+
+    if json_mode:
+        console.print_json(data={"networks": networks})
+        raise typer.Exit()
+
+    table = Table(title="Docker Networks", box=box.SIMPLE_HEAVY)
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Driver")
+    table.add_column("Scope")
+    table.add_column("Containers")
+    table.add_column("Subnets")
+    for item in networks:
+        table.add_row(
+            str(item.get("name", "-")),
+            str(item.get("driver", "-")),
+            str(item.get("scope", "-")),
+            str(item.get("containers", 0)),
+            ", ".join(item.get("subnets", []) or []) or "-",
+        )
+    console.print(table)
+
+
+@app.command("volumes-list")
+def volumes_list(
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    client = get_client()
+    volumes = list_volumes_full(client)
+
+    if json_mode:
+        console.print_json(data={"volumes": volumes})
+        raise typer.Exit()
+
+    table = Table(title="Docker Volumes", box=box.SIMPLE_HEAVY)
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Driver")
+    table.add_column("Scope")
+    table.add_column("Ref Count")
+    table.add_column("Size")
+    for item in volumes:
+        table.add_row(
+            str(item.get("name", "-")),
+            str(item.get("driver", "-")),
+            str(item.get("scope", "-")),
+            str(item.get("ref_count", 0)),
+            str(item.get("size", 0)),
+        )
+    console.print(table)
+
+
+@app.command("system-status")
+def system_status(
+    json_mode: bool = typer.Option(False, "--json"),
+):
+    client = get_client()
+    summary = get_system_summary(client)
+
+    if json_mode:
+        console.print_json(data=summary)
+        raise typer.Exit()
+
+    engine = summary["engine"]
+    counts = summary["counts"]
+    table = Table(title="Docker System", box=box.SIMPLE_HEAVY)
+    table.add_column("Field", style="bold cyan")
+    table.add_column("Value")
+    table.add_row("server_version", str(engine.get("server_version", "-")))
+    table.add_row("os", str(engine.get("os", "-")))
+    table.add_row("architecture", str(engine.get("architecture", "-")))
+    table.add_row("containers", str(counts.get("containers", 0)))
+    table.add_row("images", str(counts.get("images", 0)))
+    table.add_row("volumes", str(counts.get("volumes", 0)))
+    table.add_row("networks", str(counts.get("networks", 0)))
+    console.print(table)
 
 
 @app.command("advisor-run")

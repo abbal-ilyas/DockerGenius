@@ -7,6 +7,37 @@ async function jget(url, opts={}) {
   if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
   return data;
 }
+async function jpost(url, body={}) {
+  return jget(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+}
+async function previewThenApply(url, body, outId, refreshFn, confirmMessage, useDryRun=true){
+  let promptText = confirmMessage || "Apply these changes?";
+
+  if (useDryRun) {
+    const preview = await jpost(`${url}?dry_run=true`, body);
+    renderKeyValues(outId, {
+      Preview: preview.preview || "Dry-run completed",
+      Action: preview.action || body.action || "-",
+      Target: preview.name || preview.identifier || preview.reference || body.name || body.identifier || body.reference || "-",
+    });
+    promptText = preview.preview || promptText;
+  }
+
+  if (!confirm(promptText)) return { ok: false, cancelled: true };
+
+  const applied = await jpost(`${url}?dry_run=false`, body);
+  renderKeyValues(outId, {
+    Result: applied.ok ? "Applied" : "Skipped",
+    Action: applied.action || body.action || "-",
+    Target: applied.name || applied.identifier || applied.reference || body.name || body.identifier || body.reference || "-",
+  });
+  if (refreshFn) await refreshFn();
+  return applied;
+}
 const $ = (id) => document.getElementById(id);
 
 function setText(id, value){ $(id).textContent = value; }
@@ -14,6 +45,100 @@ function esc(s){ return String(s ?? "").replaceAll("<","&lt;").replaceAll(">","&
 
 function badge(text, cls=""){
   return `<span class="badge ${cls}">${esc(text)}</span>`;
+}
+
+function fmtBytes(value){
+  const bytes = toBytes(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B","KB","MB","GB","TB","PB"];
+  const base = 1024;
+  let v = bytes;
+  let i = 0;
+  while (v >= base && i < units.length - 1){ v /= base; i++; }
+  const digits = i === 0 ? 0 : (v >= 10 ? 1 : 2);
+  return `${v.toFixed(digits)} ${units[i]}`;
+}
+
+function fmtDate(value){
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function fmtCount(value){
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString() : "0";
+}
+
+function toBytes(value){
+  if (value == null) return 0;
+  if (typeof value === "number") return value;
+  const s = String(value).trim();
+  if (!s) return 0;
+  // docker df may return strings like "12.3MB" or "1.2 GB".
+  const m = s.match(/^([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?b)$/i);
+  if (!m) {
+    const asNum = Number(s);
+    return Number.isFinite(asNum) ? asNum : 0;
+  }
+  const n = Number(m[1]);
+  const u = m[2].toUpperCase();
+  const mult = ({B:1,KB:1024,MB:1024**2,GB:1024**3,TB:1024**4,PB:1024**5})[u] || 1;
+  return n * mult;
+}
+
+function sevClass(sev){
+  const s = String(sev||"").toLowerCase();
+  if (s === "critical") return "sev sev-critical";
+  if (s === "high") return "sev sev-high";
+  if (s === "medium") return "sev sev-medium";
+  if (s === "low") return "sev sev-low";
+  return "sev";
+}
+
+function riskClass(risk){
+  const r = String(risk||"").toUpperCase();
+  if (r === "HIGH") return "sev sev-critical";
+  if (r === "MEDIUM") return "sev sev-medium";
+  if (r === "LOW") return "sev sev-low";
+  return "sev";
+}
+
+function renderError(containerId, err){
+  const el = $(containerId);
+  if (!el) return;
+  el.innerHTML = `<div class="callout callout-bad"><strong>Error</strong><div class="sub">${esc(err?.message || err || "Unknown error")}</div></div>`;
+}
+
+function renderTable(containerId, rows, columns, opts={}){
+  const el = $(containerId);
+  if (!el) return;
+  const emptyText = opts.emptyText || "No data";
+  if (!rows || rows.length === 0){ el.innerHTML = `<div class='kpi'>${esc(emptyText)}</div>`; return; }
+
+  const head = columns.map(c => `<th>${esc(c.label)}</th>`).join("");
+  const body = rows.map(r => {
+    const tds = columns.map(c => {
+      const raw = c.get(r);
+      const v = c.html ? raw : esc(raw);
+      return `<td>${v}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function sortByBytesDesc(rows, getter){
+  return [...(rows||[])].sort((a,b)=>toBytes(getter(b)) - toBytes(getter(a)));
 }
 
 // Cards list

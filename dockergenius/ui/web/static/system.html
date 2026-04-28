@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | System</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a class="active" href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>System</h1>
+        <div class="subtitle">Docker Engine version, driver, runtime, and resource distribution on the local host.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="system-version">Loading...</div>
+        <div class="hero-pill" id="system-counts">Loading...</div>
+      </div>
+    </div>
+
+    <div class="scope-grid">
+      <section class="scope-panel">
+        <h3>Engine</h3>
+        <div id="system-engine"></div>
+      </section>
+      <section class="scope-panel">
+        <h3>Host metrics</h3>
+        <div id="system-host"></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Docker usage</h3>
+      <div id="system-usage"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+async function loadPage(){
+  const system = await jget("/system/data");
+  const metrics = await jget("/metrics/system");
+
+  $("system-version").textContent = system.engine.server_version || "unknown";
+  $("system-counts").textContent = `${system.counts.containers} containers / ${system.counts.images} images`;
+
+  renderKeyValues("system-engine", {
+    "Server version": system.engine.server_version,
+    "OS": system.engine.os,
+    "Architecture": system.engine.architecture,
+    "Kernel": system.engine.kernel_version,
+    "Docker root": system.engine.docker_root_dir,
+    "Driver": system.engine.driver,
+    "Logging driver": system.engine.logging_driver,
+    "Default runtime": system.engine.default_runtime,
+    "Swarm": system.engine.swarm,
+  });
+
+  renderKeyValues("system-host", {
+    "CPU": `${metrics.cpu.percent}% across ${metrics.cpu.count} cores`,
+    "Memory": `${Math.round(metrics.memory.percent)}% used`,
+    "Disk": `${Math.round(metrics.disk.percent)}% used`,
+    "Network": `${Math.round(metrics.net.recv / 1e6)}MB recv / ${Math.round(metrics.net.sent / 1e6)}MB sent`,
+  });
+
+  renderTable("system-usage", [system.raw_df], [
+    { label: "Containers", get: (row) => (row.Containers || []).length },
+    { label: "Images", get: (row) => (row.Images || []).length },
+    { label: "Volumes", get: (row) => (row.Volumes || []).length },
+    { label: "Networks", get: (row) => (row.Networks || []).length },
+    { label: "Layers Size", get: (row) => fmtBytes((row.LayersSize || 0)) },
+  ]);
+}
+loadPage().catch((err) => renderError("system-usage", err));
+</script>
+</body>
+</html>

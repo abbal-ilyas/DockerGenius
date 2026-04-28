@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>DockerGenius | Networks</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav">
+      <a href="/">Overview</a>
+      <a href="/containers">Containers</a>
+      <a href="/images">Images</a>
+      <a class="active" href="/networks">Networks</a>
+      <a href="/volumes">Volumes</a>
+      <a href="/system">System</a>
+      <a href="/advisor">Advisor</a>
+      <a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a>
+      <a href="/snapshots">Snapshots</a>
+      <a href="/storage">Storage</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="page-hero">
+      <div>
+        <h1>Networks</h1>
+        <div class="subtitle">Network driver, scope, attachability, and subnet details for every Docker network.</div>
+      </div>
+      <div class="hero-actions">
+        <div class="hero-pill" id="networks-count">Loading...</div>
+        <div class="hero-pill" id="networks-attachable">Loading...</div>
+      </div>
+    </div>
+
+    <div class="scope-grid">
+      <section class="scope-panel">
+        <h3>Topology</h3>
+        <div class="scope-meta" id="networks-state"></div>
+      </section>
+      <section class="scope-panel">
+        <h3>Management view</h3>
+        <div class="sub">Use this page to understand isolation boundaries and shared network attachments.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Network actions</h3>
+      <div class="row">
+        <input id="network-name" placeholder="network name" />
+        <select id="network-action">
+          <option value="create">create</option>
+          <option value="remove">remove</option>
+          <option value="connect">connect</option>
+          <option value="disconnect">disconnect</option>
+        </select>
+        <input id="network-container" placeholder="container name (connect/disconnect)" />
+        <input id="network-driver" placeholder="driver (create only, default bridge)" />
+        <label><input id="network-dry-run" type="checkbox" checked /> dry-run first</label>
+        <button class="btn-primary" onclick="runNetworkAction()">Run</button>
+      </div>
+      <div id="network-action-out"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h3>Network inventory</h3>
+      <div id="networks-table"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+async function loadPage(){
+  const data = await jget("/networks/data");
+  $("networks-count").textContent = `${data.summary.total} networks`;
+  $("networks-attachable").textContent = `${data.summary.attachable} attachable`;
+  $("networks-state").innerHTML = [
+    badge(`Internal ${data.summary.internal}`, "warn"),
+    badge(`Attachable ${data.summary.attachable}`, "ok"),
+  ].join("");
+
+  renderTable("networks-table", data.networks, [
+    { label: "Name", get: (row) => row.name },
+    { label: "Driver", get: (row) => row.driver },
+    { label: "Scope", get: (row) => row.scope },
+    { label: "Containers", get: (row) => fmtCount(row.containers) },
+    { label: "Internal", get: (row) => row.internal ? "Yes" : "No" },
+    { label: "Attachable", get: (row) => row.attachable ? "Yes" : "No" },
+    { label: "Subnets", get: (row) => (row.subnets || []).join(", ") || "-" },
+  ]);
+}
+async function runNetworkAction(){
+  const name = $("network-name").value.trim();
+  const action = $("network-action").value;
+  const container = $("network-container").value.trim();
+  const driver = $("network-driver").value.trim();
+  if (!name) return renderError("network-action-out", new Error("Enter a network name"));
+  const dryRun = $("network-dry-run").checked;
+  const message = `Confirm ${action} on network ${name}?`;
+  await previewThenApply("/networks/action", { name, action, container: container || null, driver: driver || null }, "network-action-out", loadPage, message, dryRun);
+}
+loadPage().catch((err) => renderError("networks-table", err));
+</script>
+</body>
+</html>
