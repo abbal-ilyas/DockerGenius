@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DockerGenius Dashboard</title>
+  <style>
+    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 24px; background:#0b1220; color:#e6edf3; }
+    h1 { margin: 0 0 8px; }
+    .muted { color:#9fb0c3; margin-bottom: 20px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
+    .card { background:#111a2b; border:1px solid #23324d; border-radius:12px; padding:16px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+    input, select, button, textarea {
+      background:#0f1728; color:#e6edf3; border:1px solid #2a3a58; border-radius:8px; padding:8px 10px;
+    }
+    button { cursor:pointer; }
+    button:hover { border-color:#3f5c8f; }
+    pre { background:#0a1020; border:1px solid #1d2a44; border-radius:8px; padding:10px; max-height:320px; overflow:auto; }
+    .kpi { font-size: 28px; font-weight: 700; }
+    .ok { color:#48d597; } .warn { color:#f7c65f; } .bad { color:#ff6b6b; }
+    table { width:100%; border-collapse: collapse; margin-top:8px; }
+    th, td { border-bottom:1px solid #243452; text-align:left; padding:6px; font-size:13px; }
+    .small { font-size:12px; color:#9fb0c3; }
+  </style>
+</head>
+<body>
+  <h1>DockerGenius Dashboard</h1>
+  <div class="muted">Live view powered by FastAPI endpoints</div>
+
+  <div class="grid">
+    <section class="card">
+      <h3>Health</h3>
+      <div id="health" class="small">Loading...</div>
+      <div class="row"><button onclick="loadHealth()">Refresh</button></div>
+    </section>
+
+    <section class="card">
+      <h3>Advisor</h3>
+      <div class="row">
+        <select id="profile">
+          <option>dev</option><option>staging</option><option selected>prod</option><option>security</option>
+        </select>
+        <input id="top" type="number" min="1" max="20" value="5" />
+        <button onclick="loadAdvisor()">Run</button>
+      </div>
+      <div id="advisor-kpi" class="small">No data</div>
+      <table id="advisor-table"></table>
+    </section>
+
+    <section class="card">
+      <h3>Containers Audit</h3>
+      <div class="row">
+        <label><input id="fix_script" type="checkbox" /> Generate fix script</label>
+        <button onclick="loadAudit()">Run</button>
+      </div>
+      <div id="audit-kpi" class="small">No data</div>
+      <table id="audit-table"></table>
+    </section>
+
+    <section class="card">
+      <h3>Images Scan</h3>
+      <div class="row">
+        <label><input id="no_cache" type="checkbox" /> no-cache</label>
+        <input id="cache_minutes" type="number" min="1" max="1440" value="30" />
+        <button onclick="loadScan()">Run</button>
+      </div>
+      <div id="scan-kpi" class="small">No data</div>
+      <table id="scan-table"></table>
+    </section>
+
+    <section class="card">
+      <h3>Snapshot Save</h3>
+      <div class="row">
+        <input id="snap_name" placeholder="name (optional)" />
+        <select id="snap_profile">
+          <option>dev</option><option>staging</option><option selected>prod</option><option>security</option>
+        </select>
+        <button onclick="saveSnapshot()">Save</button>
+      </div>
+      <pre id="snap-save-out">No data</pre>
+    </section>
+
+    <section class="card">
+      <h3>Snapshot Diff</h3>
+      <div class="row">
+        <input id="diff_from" placeholder="from (e.g baseline)" />
+        <input id="diff_to" placeholder="to (e.g after_change or latest)" value="latest" />
+        <button onclick="diffSnapshot()">Diff</button>
+      </div>
+      <pre id="snap-diff-out">No data</pre>
+    </section>
+  </div>
+
+  <script>
+    const api = "";
+
+    async function jget(url, opts={}) {
+      const r = await fetch(api + url, opts);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+      return data;
+    }
+
+    function esc(s){ return String(s ?? "").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+
+    async function loadHealth() {
+      const el = document.getElementById("health");
+      try {
+        const d = await jget("/health");
+        el.innerHTML = `<span class="ok">●</span> ${esc(d.status)} - ${esc(d.service)}`;
+      } catch (e) {
+        el.innerHTML = `<span class="bad">● ${esc(e.message)}</span>`;
+      }
+    }
+
+    async function loadAdvisor() {
+      const p = document.getElementById("profile").value;
+      const top = document.getElementById("top").value;
+      const kpi = document.getElementById("advisor-kpi");
+      const table = document.getElementById("advisor-table");
+      try {
+        const d = await jget(`/advisor?profile=${encodeURIComponent(p)}&top=${encodeURIComponent(top)}`);
+        const riskClass = d.global_risk === "HIGH" ? "bad" : (d.global_risk === "MEDIUM" ? "warn" : "ok");
+        kpi.innerHTML = `Score: <b>${d.global_score}</b> | Risk: <span class="${riskClass}"><b>${esc(d.global_risk)}</b></span> | Findings: <b>${d.total_findings}</b>`;
+        table.innerHTML = `<tr><th>Score</th><th>Scope</th><th>Insight</th><th>Move</th></tr>` +
+          (d.top_actions || []).map(x => `<tr><td>${x.score}</td><td>${esc(x.scope)}</td><td>${esc(x.insight)}</td><td>${esc(x.move)}</td></tr>`).join("");
+      } catch (e) {
+        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+        table.innerHTML = "";
+      }
+    }
+
+    async function loadAudit() {
+      const fix = document.getElementById("fix_script").checked;
+      const kpi = document.getElementById("audit-kpi");
+      const table = document.getElementById("audit-table");
+      try {
+        const d = await jget(`/containers/audit?fix_script=${fix}`);
+        kpi.innerHTML = `Findings: <b>${d.summary.findings}</b> | critical: ${d.summary.critical} high: ${d.summary.high} medium: ${d.summary.medium}`;
+        if (d.remediation?.script_path) kpi.innerHTML += ` | Script: <code>${esc(d.remediation.script_path)}</code>`;
+        table.innerHTML = `<tr><th>Severity</th><th>Container</th><th>Check</th><th>Insight</th></tr>` +
+          (d.findings || []).slice(0, 20).map(x => `<tr><td>${esc(x.severity)}</td><td>${esc(x.container)}</td><td>${esc(x.check)}</td><td>${esc(x.insight)}</td></tr>`).join("");
+      } catch (e) {
+        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+        table.innerHTML = "";
+      }
+    }
+
+    async function loadScan() {
+      const noCache = document.getElementById("no_cache").checked;
+      const cm = document.getElementById("cache_minutes").value;
+      const kpi = document.getElementById("scan-kpi");
+      const table = document.getElementById("scan-table");
+      try {
+        const d = await jget(`/images/scan?no_cache=${noCache}&cache_minutes=${encodeURIComponent(cm)}`);
+        const s = d.summary;
+        kpi.innerHTML = `Tool: <b>${esc(d.tool)}</b> | total: <b>${s.total_vulns}</b> | critical: <b class="bad">${s.CRITICAL}</b> high: <b class="warn">${s.HIGH}</b>`;
+        table.innerHTML = `<tr><th>Image</th><th>Risk</th><th>Total</th><th>Critical</th><th>High</th><th>Medium</th></tr>` +
+          (d.images || []).slice(0, 15).map(x => `<tr><td>${esc(x.image)}</td><td>${x.risk_points}</td><td>${x.vuln_count}</td><td>${x.counts.CRITICAL}</td><td>${x.counts.HIGH}</td><td>${x.counts.MEDIUM}</td></tr>`).join("");
+      } catch (e) {
+        kpi.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+        table.innerHTML = "";
+      }
+    }
+
+    async function saveSnapshot() {
+      const name = document.getElementById("snap_name").value.trim();
+      const profile = document.getElementById("snap_profile").value;
+      const out = document.getElementById("snap-save-out");
+      try {
+        const d = await jget("/snapshot/save", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({name: name || null, profile})
+        });
+        out.textContent = JSON.stringify(d, null, 2);
+      } catch (e) {
+        out.textContent = e.message;
+      }
+    }
+
+    async function diffSnapshot() {
+      const from = document.getElementById("diff_from").value.trim();
+      const to = document.getElementById("diff_to").value.trim() || "latest";
+      const out = document.getElementById("snap-diff-out");
+      if (!from) { out.textContent = "from is required"; return; }
+      try {
+        const d = await jget(`/snapshot/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        out.textContent = JSON.stringify(d, null, 2);
+      } catch (e) {
+        out.textContent = e.message;
+      }
+    }
+
+    loadHealth();
+    loadAdvisor();
+    loadAudit();
+    loadScan();
+  </script>
+</body>
+</html>

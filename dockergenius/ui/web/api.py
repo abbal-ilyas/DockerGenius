@@ -1,5 +1,7 @@
 from __future__ import annotations
-
+from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
@@ -24,6 +26,19 @@ from dockergenius.remediation.fixer import generate_fix_artifacts
 
 app = FastAPI(title="dockergenius API", version="0.1.0")
 
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+def index():
+    index_file = STATIC_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="Frontend not found")
+    return FileResponse(str(index_file))
 
 class SnapshotSaveRequest(BaseModel):
     name: Optional[str] = Field(default=None, description="Snapshot name. If omitted, UTC timestamp is used.")
