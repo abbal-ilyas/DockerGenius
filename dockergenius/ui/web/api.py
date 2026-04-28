@@ -1,10 +1,11 @@
 from __future__ import annotations
-import psutil
+
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
+import psutil
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +26,7 @@ from dockergenius.docker.images import list_images_full
 from dockergenius.security.analyzer import audit_containers
 from dockergenius.security.scanner import scan_images, choose_image_ref
 from dockergenius.remediation.fixer import generate_fix_artifacts
-from dockergenius.utils.config import SNAPSHOT_DIR, ensure_storage
+from dockergenius.utils.config import SNAP_DIR, ensure_storage
 
 app = FastAPI(title="dockergenius API", version="0.1.0")
 
@@ -48,6 +49,7 @@ class SnapshotSaveRequest(BaseModel):
     profile: Literal["dev", "staging", "prod", "security"] = "dev"
 
 
+# ---------- Pages ----------
 @app.get("/")
 def index():
     return _page("index.html")
@@ -73,6 +75,12 @@ def snapshots_page():
     return _page("snapshots.html")
 
 
+@app.get("/storage")
+def storage_page():
+    return _page("storage.html")
+
+
+# ---------- Core ----------
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "dockergenius-api"}
@@ -98,12 +106,15 @@ def advisor(
 
 
 @app.get("/containers/audit")
-def containers_audit(fix_script: bool = Query(False)):
+def containers_audit(
+    fix_script: bool = Query(False),
+    dry_run: bool = Query(False),
+):
     try:
         client = get_client()
         containers = list_containers_full(client)
         audit = audit_containers(containers)
-        if fix_script:
+        if fix_script and not dry_run:
             audit["remediation"] = generate_fix_artifacts(audit)
         return audit
     except Exception as exc:
@@ -125,6 +136,7 @@ def images_scan(
     no_cache: bool = Query(False),
     cache_minutes: int = Query(30, ge=1, le=24 * 60),
     image: Optional[str] = Query(None, description="Optional single image ref"),
+    dry_run: bool = Query(False),
 ):
     try:
         client = get_client()
@@ -145,6 +157,7 @@ def images_scan(
         result = scan_images(images, use_cache=not no_cache, cache_minutes=cache_minutes)
         if result.get("tool") == "none":
             raise HTTPException(status_code=503, detail=result.get("error", "No scanner available"))
+        result["dry_run"] = dry_run
         return result
     except HTTPException:
         raise
@@ -164,12 +177,16 @@ def images_list():
 
 
 @app.post("/snapshot/save")
-def snapshot_save(payload: SnapshotSaveRequest):
+def snapshot_save(payload: SnapshotSaveRequest, dry_run: bool = Query(False)):
     try:
-        name = payload.name or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         profile = payload.profile.strip().lower()
         if profile not in PROFILES:
             raise HTTPException(status_code=400, detail="Invalid profile. Use dev|staging|prod|security")
+
+        name = payload.name or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+        if dry_run:
+            return {"ok": True, "dry_run": True, "snapshot_name": name, "profile": profile}
 
         client = get_client()
         containers = list_containers_full(client)
@@ -212,10 +229,13 @@ def snapshot_diff(
 @app.get("/snapshot/list")
 def snapshot_list():
     ensure_storage()
-    if not SNAPSHOT_DIR.exists():
+    if not SNAP_DIR.exists():
         return {"snapshots": []}
-    names = sorted([p.stem for p in SNAPSHOT_DIR.glob("*.json")])
+    names = sorted([p.stem for p in SNAP_DIR.glob("*.json")])
     return {"snapshots": names}
+
+
+# ---------- Metrics ----------
 @app.get("/metrics/system")
 def system_metrics():
     vmem = psutil.virtual_memory()
@@ -247,17 +267,15 @@ def system_metrics():
         "boot_time": psutil.boot_time(),
         "uptime_seconds": int(time.time() - psutil.boot_time()),
     }
+
+
 @app.get("/docker/usage")
 def docker_usage():
     client = get_client()
-    df = client.df()  # docker system df
+    df = client.df()
     return df
+
 
 @app.post("/docker/cleanup")
 def docker_cleanup(dry_run: bool = Query(True)):
-    # dry_run only → no destructive actions
     return {"dry_run": dry_run, "message": "Cleanup is disabled (dry-run only)."}
-
-@app.get("/storage")
-def storage_page():
-    return _page("storage.html")

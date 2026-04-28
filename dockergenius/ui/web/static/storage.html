@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Docker Storage</title><link rel="stylesheet" href="/static/styles.css"/>
+</head><body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav"><a href="/">Overview</a><a href="/advisor">Advisor</a><a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a><a href="/snapshots">Snapshots</a><a href="/storage">Storage</a></div>
+  </aside>
+  <main class="content">
+    <h1>Docker Storage</h1><div class="subtitle">Disk usage + dry‑run cleanup</div>
+
+    <div class="card">
+      <h3>Docker Disk Usage</h3>
+      <div class="row">
+        <button class="btn-primary" onclick="loadDockerUsage()">Refresh</button>
+      </div>
+      <div id="docker-usage"></div>
+    </div>
+
+    <div class="card">
+      <h3>Cleanup (dry‑run)</h3>
+      <div class="row">
+        <label><input id="dry_cleanup" type="checkbox" checked/> dry‑run</label>
+        <button onclick="runCleanup()">Simulate Cleanup</button>
+      </div>
+      <div id="cleanup-out"></div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script>
+async function loadDockerUsage(){
+  const d = await jget("/docker/usage");
+  renderKeyValues("docker-usage", {
+    LayersSize: d?.LayersSize ?? 0,
+    Images: (d?.Images||[]).length,
+    Containers: (d?.Containers||[]).length,
+    Volumes: (d?.Volumes||[]).length,
+  });
+}
+async function runCleanup(){
+  const dry = $("dry_cleanup").checked;
+  const d = await jget(`/docker/cleanup?dry_run=${dry}`, {method:"POST"});
+  renderKeyValues("cleanup-out", d);
+}
+loadDockerUsage();
+</script>
+</body></html>

@@ -1,0 +1,62 @@
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Snapshots</title><link rel="stylesheet" href="/static/styles.css"/>
+</head><body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav"><a href="/">Overview</a><a href="/advisor">Advisor</a><a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a><a href="/snapshots">Snapshots</a><a href="/storage">Storage</a></div>
+  </aside>
+  <main class="content">
+    <h1>Snapshots</h1><div class="subtitle">Create + diff (no JSON)</div>
+
+    <div class="card">
+      <h3>Save snapshot</h3>
+      <div class="row">
+        <input id="snap_name" placeholder="name (optional)" />
+        <select id="snap_profile"><option>dev</option><option>staging</option><option selected>prod</option><option>security</option></select>
+        <label><input id="dry_save" type="checkbox" checked/> dry‑run</label>
+        <button class="btn-primary" onclick="saveSnapshot()">Save</button>
+      </div>
+      <div id="snap-save-out"></div>
+    </div>
+
+    <div class="card">
+      <h3>Diff snapshots</h3>
+      <div class="row">
+        <select id="from_select"></select>
+        <select id="to_select"></select>
+        <button class="btn-primary" onclick="diffSnapshot()">Diff</button>
+      </div>
+      <div id="snap-diff-out"></div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script>
+async function refreshList(){
+  await loadSnapshots("from_select");
+  await loadSnapshots("to_select");
+  const opt = document.createElement("option");
+  opt.value="latest"; opt.textContent="latest";
+  $("to_select").appendChild(opt);
+}
+async function saveSnapshot(){
+  const name = $("snap_name").value.trim();
+  const profile = $("snap_profile").value;
+  const dry = $("dry_save").checked;
+  const d = await jget(`/snapshot/save?dry_run=${dry}`,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name:name||null,profile})});
+  renderKeyValues("snap-save-out", d);
+  refreshList();
+}
+async function diffSnapshot(){
+  const from = $("from_select").value;
+  const to = $("to_select").value || "latest";
+  const d = await jget(`/snapshot/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  renderKeyValues("snap-diff-out", {from:d.from, to:d.to, changes: Object.keys(d.diff||{}).length});
+}
+refreshList();
+</script>
+</body></html>

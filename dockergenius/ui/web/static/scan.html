@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Images Scan</title><link rel="stylesheet" href="/static/styles.css"/>
+</head><body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> DockerGenius</div>
+    <div class="nav"><a href="/">Overview</a><a href="/advisor">Advisor</a><a href="/audit">Containers Audit</a>
+      <a href="/scan">Images Scan</a><a href="/snapshots">Snapshots</a><a href="/storage">Storage</a></div>
+  </aside>
+  <main class="content">
+    <h1>Images Scan</h1><div class="subtitle">Modern cards (no JSON)</div>
+    <div class="card">
+      <div class="row">
+        <select id="image_select"></select>
+        <label><input id="no_cache" type="checkbox"/> no-cache</label>
+        <input id="cache_minutes" type="number" min="1" max="1440" value="30"/>
+        <label><input id="dry_run" type="checkbox" checked/> dry‑run</label>
+        <button class="btn-primary" onclick="runScan()">Run</button>
+      </div>
+      <div id="scan-kpi" class="kpi">No data</div>
+      <div id="scan-cards"></div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+<script>
+async function runScan(){
+  const image = $("image_select").value;
+  const noCache = $("no_cache").checked;
+  const cm = $("cache_minutes").value;
+  const dry = $("dry_run").checked;
+  const q = image ? `&image=${encodeURIComponent(image)}` : "";
+  const d = await jget(`/images/scan?no_cache=${noCache}&cache_minutes=${cm}${q}&dry_run=${dry}`);
+  state.scan = d;
+  const s = d.summary;
+  $("scan-kpi").textContent = `Total ${s.total_vulns} | Critical ${s.CRITICAL} | High ${s.HIGH}`;
+  renderScan("scan-cards", d);
+}
+loadImages("image_select").then(runScan);
+</script>
+</body></html>
